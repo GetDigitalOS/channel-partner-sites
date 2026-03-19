@@ -1,0 +1,21 @@
+{
+  "name": "@channel-partner-sites/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    "./components/*": "./components/*.tsx",
+    "./lib/*": "./lib/*.ts",
+    "./tailwind.config": "./tailwind.config.js"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.0.0"
+  }
+}

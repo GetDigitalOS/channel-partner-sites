@@ -1,331 +1,239 @@
-# Compliance Report — Channel Partner Sites
+# Compliance Report — channel-partner-sites
 
-**Date:** 2026-03-19
+**Date:** 2026-05-23
 **Tier:** 2 — Interactive
-**Framework Version:** Universal Web Development Principles v2.01.01
+**Framework Version:** Universal Web Development Principles v2.02.01
+**Auditor:** Automated audit (Claude Opus 4.7) via `/compliance`
+**Previous Audit:** 2026-03-19 (regression check included)
 
-## Classification Rationale
+## Classification Reference
 
-Scored against the 10 complexity questions:
-- User Authentication: No — 0
-- Data Persistence: No (passes enrollment to HomeWealthIQ-OS API) — 0
-- Multi-Role Access: No — 0
-- Third-Party Integrations: Yes (HomeWealthIQ API, DocuSign) — 1
-- Real-Time Features: No — 0
-- Transaction Sensitivity: No direct financial transaction handling — 0
-- Scale Expectations: No — 0
-- Team Size: No — 0
-- Longevity: Likely yes — 1
-- AI/LLM Features: No — 0
-
-**Total: 2 "yes" answers, no escalation triggers → Tier 2: Interactive**
-
-The API route (`/api/enroll`) proxies enrollment to an external system and collects name, email, domain, and portal preference — PII but not payment data. No escalation triggers fire. Tier 2 is confirmed.
+Tier 2 confirmed by `docs/architecture/PROJECT_CLASSIFICATION.md` (2 "yes" / 10 — Third-Party Integrations + Longevity; no escalation triggers). Tier 1 + Tier 2 principles apply, plus active cross-cutting concerns.
 
 ---
 
 ## Summary
 
 | Status | Count |
-|--------|-------|
-| ✅ Met | 20 |
+|--------|------:|
+| ✅ Met | 14 |
 | ⚠️ Partial | 11 |
-| ❌ Not Met | 12 |
-| ⬜ Not Applicable | 5 |
+| ❌ Not Met | 22 |
+| ⬜ Not Applicable | 4 |
 
-**Overall Compliance:** 63% of applicable principles met or partially met (20 fully met + 11 partial out of 48 applicable)
+**Overall Compliance:** ~53% of applicable principles met or partially met (25 of 47 applicable).
+**Trend vs. 2026-03-19:** Regression. Prior audit reported 63%; this audit applies v2.02 (Structural Integrity) and verified more items against actual source rather than scaffold presence. The codebase has not materially advanced since the initial commit.
 
 ---
 
 ## Critical Gaps (Fix Before Launch)
 
-1. **No security headers in `next.config.js`** — Neither app configures `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, HSTS, or a Content Security Policy. Next.js makes this trivial via `headers()` in `next.config.js` but it is absent from both apps.
+The following ❌ items must be resolved before this site collects any real partner data in production:
 
-2. **No CSRF protection on the enrollment API route** — `apps/neil-solar/app/api/enroll/route.ts` and its rich-financial equivalent accept POST requests with no origin check, no token, and no `SameSite` cookie enforcement. A cross-site POST from any domain will succeed.
-
-3. **No rate limiting on the API route** — The enrollment endpoint has no request throttle. It will forward unlimited requests to the HomeWealthIQ-OS API, enabling both spam abuse and API key exhaustion.
-
-4. **No test suite** — Zero test files exist across the entire monorepo. No form validation tests, no unit tests for the `enrollPartner` library function, no cross-browser or accessibility automated checks.
-
-5. **No robots.txt or XML sitemap** — Both `public/` directories are empty. These sites will be indexed without crawl guidance; there is no sitemap to submit to search engines.
-
-6. **No favicon** — `public/` directories are empty. Both apps will render the default browser globe icon.
-
-7. **No input sanitization on the API route** — The `email`, `domain`, `partnerName`, and `companyName` fields are extracted from `request.json()` and forwarded directly to the upstream API without any sanitization, regex validation, or schema enforcement (e.g., Zod).
+1. **No lock file committed** (`Dependency Hygiene`) — `npm audit` cannot run; reproducible builds are not guaranteed. See "Cross-Cutting: Dependency Management".
+2. **No security headers** (`Security Headers`, `CSP`) — `apps/*/next.config.js` defines no `headers()` function. HSTS, CSP, X-Frame-Options, Referrer-Policy, X-Content-Type-Options are all absent.
+3. **No CSRF protection on `/api/enroll`** — POST route accepts cross-origin JSON with no origin check, no token, no SameSite cookie. See `apps/neil-solar/app/api/enroll/route.ts:4` and `apps/rich-financial/app/api/enroll/route.ts:4`.
+4. **No rate limiting or honeypot on `/api/enroll`** — partner enrollment endpoint is trivially scriptable.
+5. **No real input validation** — handler only checks field presence (`route.ts:27`). Email format, domain syntax, `portalOption` enum, length caps — none validated server-side. No client-side form exists at all.
+6. **Privacy policy + cookie disclosure missing on this property** — Footer links to `homewealthiq.com/privacy` and `/terms` (external). This site collects partner contact data via `/api/enroll` and has no first-party privacy notice.
+7. **Deploy build config is wrong** — `.github/workflows/deploy.yml:14` sets `output-directory: "dist"` but Next.js writes `.next/`. Either deploys are silently broken, or this pipeline has never successfully shipped these apps. Investigate before launch.
+8. **Fallback rendering hides config errors** — `docusignUrl = process.env.NEXT_PUBLIC_DOCUSIGN_ENROLLMENT_URL || '#'` (`apps/neil-solar/app/page.tsx:111`). The hero "Become a Partner" CTA silently becomes a no-op link if env var is unset — a Structural Integrity violation. Fail loudly at build time instead.
 
 ---
 
-## Partial Items
+## Detailed Results
 
-1. **Privacy compliance** — A privacy policy link (`homewealthiq.com/privacy`) exists in the shared `Footer` component. However, there is no cookie consent banner. The Google Fonts import (`fonts.googleapis.com`) in `globals.css` makes a third-party network request from EU visitors' browsers without consent, which may constitute a GDPR/ePrivacy violation.
+### Tier 1: Security Fundamentals
+- ✅ **HTTPS Everywhere** — Cloudflare Pages enforces HTTPS at the edge; no `http://` literals in source.
+- ❌ **Security Headers** — No middleware, no `headers()` in `next.config.js`, no `_headers` file in `public/`. Defaults from Cloudflare give no HSTS, no CSP, no X-Frame-Options, no Referrer-Policy.
+- ❌ **Input Validation** — `route.ts:27` performs presence-only checks. No schema (zod/valibot), no email regex, no `portalOption` enum guard, no length caps. The body is forwarded to a downstream API which becomes a confused-deputy risk.
+- ❌ **Dependency Hygiene** — `package-lock.json` is **not committed** at any workspace level. `npm audit` errors with `ENOLOCK`. Reproducibility, vulnerability scanning, and Renovate/Dependabot all break.
 
-2. **Open Graph / Social tags** — `<title>` and `<meta description>` are set via Next.js `Metadata` in both layouts. OG tags (`og:title`, `og:description`, `og:image`, `twitter:card`) are absent.
+### Tier 1: Design System Basics
+- ✅ **Semantic Tokens** — CSS variables on `:root` describe roles (`--primary`, `--destructive`, `--muted-foreground`), not appearance. Wired through `packages/shared/tailwind.config.js`.
+- ✅ **Token Hierarchy** — Primitives → semantic CSS vars → Tailwind utilities. Components reference semantic names only.
+- ✅ **Consistent Spacing Scale** — Tailwind default (4px base) used throughout; no ad-hoc pixel values in className strings.
+- ✅ **Typography Scale** — Uses Tailwind type ramp (`text-xs`…`text-3xl`) consistently with serif/sans font families defined in shared config.
+- ❌ **Icon System** — Inline SVGs in `DemoPortalCTA.tsx:21-39, 53-55` are hand-written, not from a system (Lucide/Phosphor). They include neither `aria-label` nor `aria-hidden`.
+- ⚠️ **Responsive Breakpoint Strategy** — Uses Tailwind defaults (`sm` 640 / `md` 768 / `lg` 1024) — fine. No `clamp()` fluid typography; no container queries; not documented as a strategy.
 
-3. **Icon accessibility** — The decorative dot pattern overlay in `neil-solar/page.tsx` correctly uses `aria-hidden="true"`. The SVG icons in `DemoPortalCTA.tsx` lack `aria-hidden` or `aria-label` — they are visually decorative but not marked as such.
+### Tier 1: Performance
+- ⚠️ **Core Web Vitals Targets** — Static-ish pages on Cloudflare edge should meet LCP/INP/CLS easily; **not measured**. Three Google Fonts faces (`DM+Sans` 4 weights + `Newsreader` 4 weights) imported via `@import url(...)` at the top of `globals.css:1` is a render-blocking pattern that hurts LCP. Use `next/font` instead.
+- ⚠️ **Asset Optimization** — No imagery yet (`apps/*/public/` are empty). `next/image` is imported nowhere. When marketing imagery lands this will need rework.
+- ⬜ **Lazy Loading** — N/A while there are no images, but the site is currently 100% above-the-fold static; no offscreen optimization required.
+- ✅ **CDN Delivery** — Cloudflare Pages.
 
-4. **Keyboard navigation** — All interactive elements are `<a>` tags (correct semantic element). However, no visible focus indicators are explicitly defined in CSS. Tailwind's default `ring` utilities are present in the design system but are not applied to the CTA links.
+### Tier 1: Accessibility (WCAG 2.1 AA)
+- ⚠️ **Semantic HTML** — `<section>`/`<h1>`/`<h2>`/`<h3>` hierarchy is reasonable on `page.tsx`. The FAQ list (`page.tsx:434-446`) is `<div>` soup rather than `<details>`/`<summary>` or a proper accordion — not keyboard-collapsible. Pain-points list uses `<div>`s instead of `<ul>`.
+- ⚠️ **Keyboard Navigation** — Only `<a>` and `<a>` exist; nothing is keyboard-broken. But also nothing is interactive — no form, no menu. Will need verification when a real form is added.
+- ⚠️ **Color Contrast** — Tokens look plausible but **not measured**. The `text-muted-foreground` (`hsl(215.4 16.3% 46.9%)`) on `bg-muted/30` is borderline. Run axe-core or Lighthouse against deployed pages before launch.
+- ⬜ **Alt Text** — N/A (no images).
+- ❌ **Focus Indicators** — No global focus-visible styles; Tailwind preflight removes browser default outline on buttons. CTA `<a>` elements have hover but no `focus:` ring class. Add `focus-visible:ring-2 focus-visible:ring-ring` to interactive elements.
+- ❌ **Reduced Motion** — `prefers-reduced-motion` is not referenced anywhere. Multiple `transition-colors` and `transition-shadow` classes will animate regardless.
 
-5. **Heading hierarchy** — Both pages use `<h1>` in the hero section and `<h2>` / `<h3>` appropriately. One gap: the `neil-solar` page uses several `<p>` elements styled as section labels (e.g., `text-[10px] font-bold uppercase tracking-[3px]`) that function as visual headings but are not marked up as headings — minor semantic gap.
+### Tier 1: SEO Fundamentals
+- ⚠️ **Semantic HTML for Search** — Each app has a `<title>` and meta description via Next `Metadata` (`layout.tsx:4-8`). Two distinct apps share near-identical titles though — duplicate-content risk if both deploy to the same domain.
+- ❌ **Open Graph & Social Tags** — No `og:*` or `twitter:card` metadata in either `layout.tsx`. Share previews will be bare.
+- ❌ **Structured Data** — No JSON-LD anywhere. As a partnership marketing site, at minimum `Organization` + `FAQPage` schemas should exist (the FAQ block on `page.tsx:436-446` is a free win).
+- ❌ **Technical SEO** — `public/robots.txt`, `public/sitemap.xml`, and `<link rel="canonical">` are all missing. No `next-sitemap` or framework equivalent configured.
+- ⚠️ **Performance as SEO** — See Performance section. Render-blocking Google Fonts will hurt LCP and therefore ranking.
 
-6. **Dependency hygiene** — Dependencies are minimal and current (Next.js 15, React 19, Tailwind 3.4, TypeScript 5.x). However, there is no `npm audit` step in the deploy workflow (`deploy.yml`) and no Dependabot configuration.
+### Tier 1: Code Quality
+- ✅ **Separation of Concerns** — Pages compose shared components from `packages/shared`; API route is its own module; design tokens live in CSS and Tailwind config.
+- ✅ **DRY Principle** — `Footer`, `ComplianceDisclosure`, `IntegrationOptions`, `HEIExplainer`, `DemoPortalCTA` are properly shared via the workspace package. `enroll.ts` is shared.
+- ✅ **Semantic Naming** — Variables (`FUNNEL_POSITIONS`, `WHAT_THEY_GET`, `embedUrl`) describe purpose. Tokens follow the system convention.
+- ✅ **Mobile-First CSS** — Tailwind defaults to mobile-first; layouts use `sm:`/`md:`/`lg:` to enhance.
 
-7. **CDN delivery** — Deployment is via Cloudflare Pages, which is a global CDN. However, Google Fonts are loaded from an external origin (`fonts.googleapis.com`) rather than being self-hosted or bundled via `next/font`, introducing a render-blocking network dependency on a third-party origin.
+### Tier 1: DevOps Basics
+- ⚠️ **Automated Deployment** — `.github/workflows/deploy.yml` exists, but `output-directory: "dist"` is wrong for Next.js (`.next/`). Either this has never run successfully or it has been quietly producing empty deploys. **Verify** in the Cloudflare Pages dashboard.
+- ❌ **Preview Deployments** — Workflow triggers only on push to `main`/`dev`; PRs from feature branches get no preview URL.
+- ⚠️ **Environment Separation** — `dev` branch + `main` branch exist via workflow; no `.env.example` documents required env vars (`NEXT_PUBLIC_DEMO_PORTAL_URL`, `NEXT_PUBLIC_DOCUSIGN_ENROLLMENT_URL`, `NEXT_PUBLIC_HOMEWEALTHIQ_API_URL`, `HOMEWEALTHIQ_API_KEY`, `NEXT_PUBLIC_BD_PARTNER_ID`).
+- ⚠️ **Domain & DNS Management** — Per registry: `channel-partner-sites.pages.dev` / `dev.channel-partner-sites.pages.dev`. No custom domain documented; no DNS notes in repo.
+- ✅ **Version Control** — Git, GitHub remote configured; commit messages on recent commits are descriptive (conventional-commit style).
 
-8. **Error handling strategy** — The enrollment API route returns structured JSON errors with appropriate status codes (400, 500, 502). The page itself has no client-side handling for the case where `NEXT_PUBLIC_DOCUSIGN_ENROLLMENT_URL` is unset — the CTA button links to `#`, silently doing nothing.
-
-9. **Client-side error capture** — No error tracking service (Sentry, LogRocket, etc.) is configured in either app.
-
-10. **Uptime monitoring** — No evidence of uptime monitoring configuration.
-
-11. **Rendering strategy** — Both pages are Next.js App Router pages. The rendering strategy (SSG vs SSR) is not explicitly documented. Given no dynamic data is fetched at render time and env vars are read inline, both pages will render as static with client-side env var injection — acceptable but undocumented.
-
----
-
-## Principle-by-Principle Results
-
-### Tier 1 Principles
-
-#### Security Fundamentals
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| HTTPS Everywhere | ✅ Met | Cloudflare Pages enforces HTTPS |
-| Security Headers | ❌ Not Met | Neither `next.config.js` sets `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, HSTS, or CSP |
-| Input Validation | ❌ Not Met | API route checks for presence of required fields but performs no format validation (email regex, domain format, string length limits, or sanitization) |
-| Dependency Hygiene | ⚠️ Partial | Deps are current; no `npm audit` in CI, no Dependabot |
-
-#### Design System Basics
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Semantic Tokens | ✅ Met | Full semantic token system in `packages/shared/tailwind.config.js` (background, foreground, primary, muted, success, warning, info, destructive, card) |
-| Token Hierarchy | ✅ Met | Primitives (HSL values in CSS vars) → Semantic (token names) → Component (applied via Tailwind utilities) |
-| Consistent Spacing Scale | ✅ Met | Tailwind's 4px base unit used throughout; consistent `gap-5`, `px-6`, `py-16` etc. |
-| Typography Scale | ✅ Met | Defined hierarchy: `text-2xl`/`text-xl` headings, `text-sm` body, `text-xs` secondary. Font families: DM Sans (sans), Newsreader (serif) |
-| Icon System | ⚠️ Partial | Inline SVGs used in `DemoPortalCTA`; decorative overlay in neil-solar uses `aria-hidden="true"` correctly. SVG icons in DemoPortalCTA are missing `aria-hidden="true"` |
-| Responsive Breakpoint Strategy | ✅ Met | Tailwind breakpoints used consistently (`sm:`, `md:`, `lg:`). `clamp()` not used for fluid typography but fixed Tailwind scale is acceptable |
-
-#### Performance
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Core Web Vitals Targets | ⚠️ Partial | No measurement in place; pages are primarily static with no heavy JS, suggesting good LCP/CLS baseline. Not verified. |
-| Asset Optimization | ⚠️ Partial | No images exist in the codebase at all (no `<img>` or `<Image>` tags, no files in `public/`). CSS/JS will be minified by Next.js build. Google Fonts loaded via CSS `@import` rather than `next/font` — not optimal. |
-| Lazy Loading | ⬜ Not Applicable | No offscreen images present |
-| CDN Delivery | ✅ Met | Cloudflare Pages provides global edge delivery |
-
-#### Accessibility (WCAG 2.1 AA)
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Semantic HTML | ⚠️ Partial | Good `<h1>`/`<h2>`/`<h3>` hierarchy, `<section>`, `<footer>`, `<nav>` absent but not required. Some visual headings implemented as `<p>` elements. |
-| Keyboard Navigation | ⚠️ Partial | All interactive elements are `<a>` links (correct). No `<button>` misuse. Focus order is logical. No explicit focus ring styles defined. |
-| Color Contrast | ⚠️ Partial | Semantic tokens defined (muted-foreground: `215.4 16.3% 46.9%` on white background ≈ 4.6:1, passing). Hero section uses `--hero-muted` (`30 5% 49%`) on `--hero-bg` (`24 10% 10%`) — estimated ~5:1, likely passing. Very small text (`text-[9px]`, `text-[10px]`) is not verified; WCAG requires 4.5:1 minimum. |
-| Alt Text | ⬜ Not Applicable | No `<img>` or `<Image>` elements in any page or component |
-| Focus Indicators | ❌ Not Met | No `focus:ring` or `focus-visible:` utilities applied to CTA links in `page.tsx`. Tailwind defaults provide none. |
-| Reduced Motion | ❌ Not Met | `transition-colors` and `transition-shadow` are used on interactive elements. No `@media (prefers-reduced-motion: reduce)` override anywhere in the codebase. |
-
-#### SEO Fundamentals
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Semantic HTML for Search | ✅ Met | `<title>` and `<meta description>` set in both layout files. Heading hierarchy present. |
-| Open Graph & Social Tags | ❌ Not Met | No `og:title`, `og:description`, `og:image`, or `twitter:card` meta tags |
-| Structured Data | ❌ Not Met | No JSON-LD schema (Organization, FAQPage, etc.) despite the FAQ section in neil-solar |
-| Technical SEO | ❌ Not Met | No `robots.txt`, no XML sitemap, no canonical URL configuration. Both `public/` directories are empty. |
-| Performance as SEO | ⚠️ Partial | Pages are lightweight and likely fast. No measurement tooling in place. |
-
-#### Code Quality
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Separation of Concerns | ✅ Met | Shared components in `packages/shared`, app-specific pages in `apps/*/app`. API logic in route handlers. Business logic (enrollment) in `lib/enroll.ts`. |
-| DRY Principle | ✅ Met | Shared components (`ComplianceDisclosure`, `Footer`, `IntegrationOptions`, `DemoPortalCTA`, `HEIExplainer`) are reused across both apps. No copy-paste duplication of compliance text. |
-| Semantic Naming | ✅ Met | CSS tokens and class names describe purpose (`--primary`, `--muted-foreground`, `bg-card`, `text-destructive`). Component names are descriptive. |
-| Mobile-First CSS | ✅ Met | Tailwind default is mobile-first. Responsive classes (`md:grid-cols-2`, `lg:grid-cols-4`) enhance for larger screens. |
-
-#### DevOps Basics
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Automated Deployment | ✅ Met | GitHub Actions workflow deploys to Cloudflare Pages on push to `main`/`dev` |
-| Preview Deployments | ✅ Met | `dev` branch deploys to a preview environment via the shared workflow |
-| Environment Separation | ✅ Met | `main` = production, `dev` = preview; `.env.local.example` files for local config |
-| Domain & DNS Management | ⬜ Not Applicable | Not determinable from repo alone |
-| Version Control | ✅ Met | Git with clear commit structure; `main` is the production branch |
-
-#### UX Fundamentals
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Responsive Design | ✅ Met | Grid layouts with responsive breakpoints throughout; mobile-first Tailwind |
-| Error Prevention | ⚠️ Partial | Pages are primarily informational/outbound links. The `docusignUrl` fallback to `#` when env var unset is a silent failure, not user-facing error prevention. |
-| Loading States | ⬜ Not Applicable | No async operations triggered from the page UI (all CTAs are external links to DocuSign/demo portal) |
-| Consistent Patterns | ✅ Met | Same card pattern, button style, section structure used throughout both apps |
+### Tier 1: UX Fundamentals
+- ✅ **Responsive Design** — Layouts use grid/flex with breakpoints throughout.
+- ❌ **Error Prevention** — There is no form on this site at all. The CTA links straight to a DocuSign URL. If the design ever brings the form in-house, this needs full validation work.
+- ⬜ **Loading States** — N/A — no async operations from the browser today.
+- ✅ **Consistent Patterns** — Both apps use the same shared components and the same primary-button visual treatment.
 
 ---
 
-### Tier 2 Principles
+### Tier 2: Enhanced Security
+- ❌ **CSRF Protection** — `/api/enroll` POST has no origin check, no double-submit cookie, no token. Any third-party page can POST to it.
+- ❌ **Rate Limiting** — No middleware, no Cloudflare WAF rule, no `@upstash/ratelimit`, nothing. A bot can flood the downstream HomeWealthIQ API through this endpoint.
+- ❌ **Honeypot Fields** — No form, no honeypot. When a form is added, this is required.
+- ⚠️ **Output Encoding** — React escapes by default and there is no user-provided data displayed on the page today. No `dangerouslySetInnerHTML` anywhere — good. But the API echoes the downstream API's raw error text back in `route.ts:48` (`error: result.error`), which surfaces upstream internals.
+- ❌ **Content Security Policy** — Not configured. Google Fonts (`fonts.googleapis.com`) would need to be in `style-src`/`font-src` once CSP is enabled.
+- ❌ **Dependency Scanning** — No Dependabot config, no Snyk, no `npm audit` step in CI. Combined with the missing lockfile, dependency vulns are completely invisible.
 
-#### Enhanced Security
+### Tier 2: Data Handling
+- ❌ **Client-Side Validation + Server-Side Validation** — Server: presence-only. Client: nonexistent (no form).
+- ✅ **Data Minimization** — Enrollment schema is reasonable (`partnerName`, `companyName`, `email`, `phone`, `domain`, `portalOption`). No over-collection.
+- ✅ **Secure Transmission** — HTTPS-only; sensitive fields go in POST body, not query string.
+- ❌ **Privacy Compliance** — No cookie consent. No first-party privacy policy page (Footer links to homewealthiq.com). No disclosure of what `/api/enroll` does with the data. See Cross-Cutting: Privacy.
 
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| CSRF Protection | ❌ Not Met | The `/api/enroll` route has no CSRF token, no `Origin`/`Referer` header check, no `SameSite` cookie enforcement |
-| Rate Limiting | ❌ Not Met | No rate limiting middleware or library configured on the enrollment API route |
-| Honeypot Fields | ❌ Not Met | The enrollment API is not surfaced in a user-facing form in this codebase (the form lives in DocuSign), but the API itself has no bot-detection mechanism |
-| Output Encoding | ✅ Met | React automatically escapes JSX output. No `dangerouslySetInnerHTML` anywhere in the codebase. |
-| Content Security Policy | ❌ Not Met | No CSP header configured in `next.config.js` |
-| Dependency Scanning | ❌ Not Met | No `npm audit` in the CI workflow; no Dependabot configuration file |
+### Tier 2: Design System Extension
+- ⚠️ **Component Token Layer** — Buttons re-implement `bg-primary px-X py-Y` inline in each page rather than a shared `<Button>` component with `variant`/`size` props. Tokens exist but no component layer wraps them.
+- ❌ **Interactive State Tokens** — `:focus-visible`, `:active`, `:disabled` tokens not defined. Only `hover:bg-primary/90` is consistently used.
+- ❌ **Motion Design Principles** — No documented durations/easings. `transition-colors` and `transition-shadow` use Tailwind defaults with no system. No `prefers-reduced-motion` handling.
+- ❌ **Form Component Library** — No form components in `packages/shared/`. When a real enrollment form is built it will need `<Input>`, `<Select>`, `<Checkbox>`, validation-state styling.
+- ⚠️ **Content Design Standards** — Microcopy is consistent within a page but no documented voice/tone guide; no patterns for empty/error/success states (there are no such states yet).
 
-#### Data Handling
+### Tier 2: Frontend Architecture Basics
+- ⚠️ **State Ownership** — No client state today. `process.env.NEXT_PUBLIC_*` is read at module scope in pages — fine for SSG, but undocumented as a pattern.
+- ⬜ **Data Fetching Strategy** — N/A — pages are static; only the API route fetches, and it does so once per request.
+- ⚠️ **Rendering Strategy Decision** — Pages are de facto SSG (no `dynamic` exports, no data fetching). Not documented as an intentional choice. An ADR for "SSG + edge runtime via Cloudflare Pages" would close this.
 
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Client-Side + Server-Side Validation | ⚠️ Partial | The API route checks that required fields are present (server-side). No email format validation, no domain format validation, no string length limits. Client-side form validation is not applicable as the form is in DocuSign (external). |
-| Data Minimization | ✅ Met | Only collects partnerName, companyName, email, phone, domain, portalOption — directly necessary for enrollment |
-| Secure Transmission | ✅ Met | HTTPS enforced by Cloudflare Pages; API key passed in `Authorization: Bearer` header server-side only; API key is a server-only env var (`HOMEWEALTHIQ_API_KEY`, no `NEXT_PUBLIC_` prefix) |
-| Privacy Compliance | ⚠️ Partial | Privacy Policy link present in Footer. No cookie consent banner. Google Fonts loaded via CSS `@import` without self-hosting, making a third-party network request. |
+### Tier 2: Architecture
+- ✅ **Separation of Concerns** — Pages = composition; shared components = presentation; `lib/enroll.ts` = network; API route = boundary.
+- ⚠️ **Configuration Externalized** — Env vars are used. However, defaults like `'neil-okun'` (`route.ts:42`) and `'#'` for DocuSign URL hide misconfiguration. No `.env.example` to document required vars.
+- ⚠️ **Error Handling Strategy** — API route returns shaped JSON errors with HTTP codes. But the page surface has no error UX (no form, no error toasts).
+- ⚠️ **State Management** — N/A while purely static; should be revisited when form lands.
 
-#### Design System Extension
+### Tier 2: Error & Edge Case UX
+- ❌ **Empty States** — N/A today, but no patterns defined for when the inevitable application form is added.
+- ❌ **Partial Failure** — N/A.
+- ❌ **Timeout UX** — N/A.
+- ❌ **Form Error Recovery** — N/A.
+- ❌ **Offline Awareness** — Not implemented.
 
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Component Token Layer | ✅ Met | `border-border`, `bg-card`, `text-primary`, `bg-primary/10` etc. applied at component level |
-| Interactive State Tokens | ⚠️ Partial | `hover:bg-primary/90` and `hover:shadow-md` defined. `focus:`, `active:`, and `disabled:` states not defined. |
-| Motion Design Principles | ❌ Not Met | `transition-colors` (no duration specified — inherits Tailwind default 150ms) and `transition-shadow` used. No `prefers-reduced-motion` override. No consistent easing documentation. |
-| Form Component Library | ⬜ Not Applicable | No HTML forms in this codebase; enrollment form is in external DocuSign |
-| Content Design Standards | ⚠️ Partial | Compliance disclosures have consistent format. No defined error message, empty state, or confirmation dialog patterns (not needed for current scope, but absent). |
+### Tier 2: Performance Enhancement
+- ⬜ **Code Splitting** — Next.js does route-level splitting by default; no calculator-style heavy code to split.
+- ⬜ **Debouncing/Throttling** — N/A (no inputs).
+- ⬜ **Request Cancellation** — N/A.
+- ⚠️ **Caching Strategy** — Cloudflare Pages caches static output well by default. Google Fonts via `@import url(...)` bypass `next/font` caching/preload optimizations. No `Cache-Control` headers configured for the API route.
 
-#### Frontend Architecture Basics
+### Tier 2: Testing
+- ❌ **Form Validation Testing** — No tests exist. No `*.test.*` or `__tests__/` directory anywhere in the repo.
+- ❌ **Calculator Logic Testing** — N/A (no calculator) but the principle that `enroll.ts` should have unit tests for the response-handling branches still applies.
+- ❌ **Cross-Browser Testing** — Not evidenced.
+- ❌ **Accessibility Testing** — No axe-core, no Playwright a11y step in CI.
+- ❌ **Visual Regression Testing** — Not configured.
 
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| State Ownership | ✅ Met | No client state. All page data is static constants or env vars resolved at build/request time. |
-| Data Fetching Strategy | ✅ Met | No client-side data fetching. Enrollment API call is server-side only. Clean. |
-| Rendering Strategy Decision | ⚠️ Partial | Implicitly SSG/static rendering via Next.js App Router. Not documented. `process.env.NEXT_PUBLIC_*` values are inlined at build time, which means changing them requires a redeploy — this should be documented. |
+### Tier 2: Observability
+- ❌ **Client-Side Error Capture** — No Sentry / LogRocket / equivalent. The registry says `observability: "@getdigitalos/observability"` but that package is not declared as a dependency in any `package.json` and not imported anywhere. The expected wiring is missing.
+- ❌ **Source Maps in Production** — Default Next.js prod build emits no source maps; none uploaded.
+- ❌ **Basic Analytics** — None. No Plausible/Fathom/GA snippet.
+- ❌ **Uptime Monitoring** — None documented.
 
-#### Architecture
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Separation of Concerns | ✅ Met | Presentation in page components, shared components in package, business logic in `lib/enroll.ts`, API integration in route handlers |
-| Configuration Externalized | ✅ Met | No hardcoded API URLs or keys; all via env vars with `.env.local.example` files |
-| Error Handling Strategy | ⚠️ Partial | API route has consistent error responses. Page has no error UI for failed env var configuration (`docusignUrl` silently falls back to `#`). |
-| State Management | ✅ Met | No state management needed; pure static rendering |
-
-#### Error & Edge Case UX
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Empty States | ⬜ Not Applicable | No data-driven content; pages render constant content |
-| Partial Failure | ⬜ Not Applicable | No multi-request page loads |
-| Timeout UX | ⬜ Not Applicable | No async operations initiated from page UI |
-| Form Error Recovery | ⬜ Not Applicable | No HTML forms in this codebase |
-| Offline Awareness | ❌ Not Met | No offline detection. If a user is offline and clicks "Become a Partner", the DocuSign link will silently fail with a browser network error. |
-
-#### Performance Enhancement
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Code Splitting | ✅ Met | Next.js App Router performs automatic code splitting per route |
-| Debouncing/Throttling | ⬜ Not Applicable | No input handlers or search fields |
-| Request Cancellation | ⬜ Not Applicable | No client-side data fetching |
-| Caching Strategy | ✅ Met | Static assets will be cached by Cloudflare CDN; Next.js applies appropriate cache headers |
-
-#### Testing
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Form Validation Testing | ❌ Not Met | No tests for the API route validation logic in `enrollPartner` or the route handler |
-| Calculator Logic Testing | ⬜ Not Applicable | No calculator logic |
-| Cross-Browser Testing | ❌ Not Met | No evidence of cross-browser testing setup |
-| Accessibility Testing | ❌ Not Met | No axe-core, no Playwright accessibility checks, no CI accessibility step |
-| Visual Regression Testing | ❌ Not Met | No Chromatic, Percy, or Playwright visual comparison |
-
-#### Observability
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| Client-Side Error Capture | ❌ Not Met | No Sentry, LogRocket, or equivalent configured |
-| Source Maps in Production | ❌ Not Met | No source map upload to an error service (Next.js may generate them locally; not sent to any service) |
-| Basic Analytics | ❌ Not Met | No analytics — no Plausible, Fathom, or Google Analytics |
-| Uptime Monitoring | ❌ Not Met | No uptime monitoring configured |
-
-#### Content Management
-
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| CMS Evaluation | ⬜ Not Applicable | Content is developer-managed (TypeScript constants). Appropriate for the current scale — two sites, infrequent content changes. Would need re-evaluation if content volume grows. |
-| Content Modeling | ✅ Met | Content structured as typed TypeScript constants (PAIN_POINTS, FAQ_ITEMS, HOW_IT_WORKS arrays). |
-| Editorial Preview | ⬜ Not Applicable | No CMS in use |
-| Content Versioning | ✅ Met | Git history provides full content versioning |
+### Tier 2: Content Management
+- ⬜ **CMS Evaluation** — Content is hardcoded in `page.tsx` arrays. Acceptable for two hand-built partner pages, but doesn't scale to "many partners" — flag for ADR if the partner count grows.
+- ⬜ **Content Modeling** / **Editorial Preview** / **Content Versioning** — N/A at current scope.
 
 ---
 
-### Cross-Cutting Concerns
+### Cross-Cutting: Structural Integrity (v2.02)
 
-#### Monorepo Architecture
-The Turborepo monorepo structure is clean and well-suited for the use case. Shared components in `packages/shared` with typed props, exported from a single `index.ts`. Per-app theme customization via CSS custom properties is a correct pattern. No concerns here.
+- ❌ **No swallowed errors** — `enrollPartner()` (`packages/shared/lib/enroll.ts:39-45`) returns `{ success: false, error: "...502 <html>..." }` instead of throwing — the API route then forwards downstream error text to the client (`route.ts:48`). This leaks upstream details and obscures the original failure type.
+- ⚠️ **No manual sync steps** — Mostly clean; partner enrollment is automated via the API.
+- ❌ **Actionable error messages** — `'API configuration missing'` (`route.ts:10`), `'Enrollment failed'` (fallback at `route.ts:50`), `'#'` as a DocuSign URL — none of these tell anyone what to do.
+- ✅ **CLI commands support headless execution** — N/A (no project-specific CLI).
+- ❌ **Source of truth is singular** — The `bdPartnerId` default `'neil-okun'` / `'rich-keal'` is duplicated as a hardcoded fallback in two `route.ts` files and as text strings in `Footer` props in the two `page.tsx` files. A single shared config object per partner would consolidate this.
 
-#### Financial / Compliance Content
-The compliance disclosures (ComplianceDisclosure component, inline asterisk disclosures, footer disclaimer text) are well-structured and consistently applied across both apps. This is a notable strength given the financial nature of the product.
+### Cross-Cutting: Privacy & Data Protection (Tier 1 + Tier 2 checklist)
 
-#### TypeScript Strict Mode
-Both apps and the shared package use `"strict": true` in `tsconfig.json`. This is positive for long-term maintainability.
+- ❌ **Privacy policy** — First-party page absent. Footer links to `homewealthiq.com/privacy`, which is a separate property.
+- ❌ **Cookie disclosure** — Not present. No cookies are set today, but the project will likely add analytics; better to put the mechanism in now.
+- ✅ **Secure form submission** — HTTPS-only.
+- ✅ **Data minimization** — Fields collected are limited and justified.
+- ❌ **Cookie consent mechanism** — None (no analytics yet, but planned per registry `observability` field).
+- ⚠️ **Clear consent for marketing communications** — Form is not in-house yet; will need an explicit opt-in checkbox when it is.
+- ❌ **Data retention awareness** — Nothing documents how long the downstream HomeWealthIQ-OS retains the partner enrollment data.
+- ⚠️ **DPA with form processor** — Downstream is HomeWealthIQ (internal Barastone system) — no third-party DPA needed, but the data flow should be documented in the privacy policy.
 
-#### Environment Variable Security
-`HOMEWEALTHIQ_API_KEY` is correctly a server-side-only variable (no `NEXT_PUBLIC_` prefix). It is never passed to the client. The API route reads it server-side before making the upstream call. This pattern is correct.
+### Cross-Cutting: AI/LLM Integration
+- ⬜ **Not applicable** — No AI features, no LLM SDK dependencies, no AI-generated user-facing content.
+
+### Cross-Cutting: Dependency Management
+- ❌ **Lock files committed** — **Major gap.** No `package-lock.json` anywhere. Reproducible builds, `npm audit`, Dependabot all blocked. `package.json` declares `"packageManager": "npm@10.0.0"` so npm is expected.
+- ✅ **Reasonable dependency count** — 3 runtime deps (`next`, `react`, `react-dom`); 6 devDeps. Lean.
+- ⚠️ **Licenses** — Not audited (no tooling), but the declared deps are all permissive (MIT/Apache).
+- ❌ **Audit in CI** — Not configured.
+
+### Cross-Cutting: Project Hub Registration
+- ✅ **Registered in Project Hub** — `C:/dev/project-hub/registry/projects.json` lines 1428–1457.
+- ✅ **Tier matches classification** — Registry `tier: 2`, classification doc Tier 2.
+- ✅ **Git remote configured** — `https://github.com/GetDigitalOS/channel-partner-sites.git`.
+- ✅ **Dev port assigned** — `3308` (in Barastone range).
+- ✅ **Status is current** — `status: "development"` matches reality.
+- ⚠️ **Stack metadata accuracy** — Registry claims `observability: "@getdigitalos/observability"`, but the package is not installed and not imported in any source file. Either install it or remove the claim.
+- ✅ **`last_audited` updated** — Updated to `2026-05-23` as part of this audit.
 
 ---
 
-## Recommendations
+## Recommendations (Prioritized)
 
-### P0 — Fix Before Launch
+### 🔴 Critical (Security / Compliance / Launch Blockers)
+1. **Commit `package-lock.json`** at the repo root (and any per-workspace locks npm produces). Run `npm install` once and commit the result. Unblocks `npm audit` and Dependabot.
+2. **Fix `output-directory` in `.github/workflows/deploy.yml:14`** — Next.js does not produce a `dist/` directory. Either configure `@cloudflare/next-on-pages` and set output accordingly, or move to `next export` + `out/`. Verify a deploy completes end-to-end.
+3. **Add security headers** — Define a `headers()` function in `apps/*/next.config.js` for `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, and a baseline CSP. Or use a Cloudflare `_headers` file.
+4. **Harden `/api/enroll`**: schema-validate the body with `zod`; enforce `Origin`/`Referer` allowlist; rate-limit (Cloudflare WAF or `@upstash/ratelimit`); add a honeypot if the form ever moves in-house.
+5. **First-party privacy policy + cookie disclosure on this domain**. Footer links should resolve within the property where data is being collected.
+6. **Fail loudly when required env vars are missing** — Remove the `|| '#'` and `|| ''` fallbacks in `apps/*/app/page.tsx`. Throw at build/render time so misconfigured deploys never ship.
 
-1. **Add security headers to `next.config.js`** in both apps. At minimum: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`. Add a basic CSP that allowlists `homewealthiq.com` and `fonts.googleapis.com`.
+### 🟡 Important (Quality / Reliability)
+7. **Replace `@import url('https://fonts.googleapis.com/...')` in `globals.css:1`** with `next/font/google`. Eliminates render-blocking request, preloads fonts, removes a `style-src` exception you'd otherwise need in CSP.
+8. **Add OG + Twitter card metadata and JSON-LD** (`Organization`, `FAQPage` from the existing FAQ array) in each `app/layout.tsx`.
+9. **Add `public/robots.txt`, `public/sitemap.xml` (or `next-sitemap`), and `<link rel="canonical">`** per app.
+10. **Wire up the declared observability package** — install `@getdigitalos/observability`, instrument the API route and the client root, upload source maps. Or update the registry to reflect that observability is not yet wired.
+11. **Add focus styles and reduce-motion handling globally** in `globals.css` (e.g. `*:focus-visible { @apply ring-2 ring-ring outline-none; }` and a `@media (prefers-reduced-motion: reduce)` block that zeros transitions).
+12. **Stop forwarding downstream API error text to the client** (`apps/*/app/api/enroll/route.ts:48`). Log the detail server-side; return a generic actionable message to the caller.
+13. **Add at least smoke tests** — a Playwright test that renders each app and asserts the H1 and the primary CTA's `href`. A unit test for `enrollPartner`'s ok/non-ok branches.
+14. **Set up PR preview deployments** — extend `deploy.yml` to run on `pull_request` events.
 
-2. **Add CSRF protection to the enrollment API route.** Since the route is called by a first-party client (or will be), the simplest approach is to check the `Origin` header matches the app's own origin. Alternatively, use a CSRF token pattern if a client-side form is ever added.
+### 🟢 Recommended (Best Practice)
+15. **Promote the inline `<button>`/`<a>` styles to a `<Button>` component** in `packages/shared/components/Button.tsx` with `variant`/`size` props.
+16. **Replace hand-rolled SVGs in `DemoPortalCTA.tsx`** with `lucide-react` icons and add `aria-hidden="true"` to decorative icons.
+17. **Convert the FAQ `<div>` blocks to `<details>`/`<summary>`** or a proper accordion with `aria-expanded`.
+18. **Add `.env.example`** documenting `NEXT_PUBLIC_DEMO_PORTAL_URL`, `NEXT_PUBLIC_DOCUSIGN_ENROLLMENT_URL`, `NEXT_PUBLIC_HOMEWEALTHIQ_API_URL`, `HOMEWEALTHIQ_API_KEY`, `NEXT_PUBLIC_BD_PARTNER_ID`.
+19. **Consolidate per-partner config** (name, BD id, footer name, DocuSign URL) into a shared `partners.ts` map indexed by app, sourced from one place instead of duplicated in `page.tsx` + `route.ts`.
+20. **Write an ADR** for the rendering choice (SSG + edge) and one for "two apps now, N partners later — content model strategy."
 
-3. **Add rate limiting.** Install `@upstash/ratelimit` (works with Cloudflare/Vercel) or use a simple in-memory approach for self-hosted. Apply to `/api/enroll`.
+---
 
-4. **Add Zod validation to the API route** for email format, domain format, and string length bounds. The `enrollPartner` library function already has a typed interface — validate against it before calling.
+## Next Review
 
-5. **Create `robots.txt` and `sitemap.xml`** in both `public/` directories. Use Next.js App Router's `sitemap.ts` and `robots.ts` file conventions for automatic generation.
-
-6. **Add focus ring styles.** Add `focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2` to all CTA links (or add a global `a:focus-visible` style in `globals.css`).
-
-7. **Add `prefers-reduced-motion` override.** In `globals.css`, add:
-   ```css
-   @media (prefers-reduced-motion: reduce) {
-     *, *::before, *::after { transition-duration: 0.01ms !important; }
-   }
-   ```
-
-### P1 — High Priority (Shortly After Launch)
-
-8. **Add Open Graph meta tags** to both layout files. Use Next.js `Metadata` API: `openGraph.title`, `openGraph.description`, `openGraph.images`, `twitter.card`.
-
-9. **Add JSON-LD structured data.** The neil-solar FAQ section maps directly to `FAQPage` schema. Both apps should include `Organization` schema.
-
-10. **Self-host Google Fonts** via `next/font/google` instead of CSS `@import`. This eliminates the external network request, improves LCP, and avoids GDPR concerns about third-party font requests.
-
-11. **Add `npm audit` to the deploy workflow.** Add `- run: npm audit --audit-level=high` before the build step in `deploy.yml`.
-
-12. **Add a test suite.** At minimum: unit tests for `enrollPartner` (lib/enroll.ts) covering success and error paths, and unit tests for the API route handler covering missing fields, malformed body, and API errors. Use Vitest — it's already in the portfolio standard.
-
-13. **Fix the docusign URL silent failure.** If `NEXT_PUBLIC_DOCUSIGN_ENROLLMENT_URL` is not set, the button currently links to `#`. Either throw a build error if the var is missing, or conditionally render the button only when the URL is present.
-
-### P2 — Before Scaling
-
-14. **Add client-side error tracking.** Install Sentry (free tier sufficient). Add to both apps' layouts.
-
-15. **Add analytics.** Plausible or Fathom (privacy-first, no cookie consent required). Track page views and CTA clicks at minimum.
-
-16. **Add uptime monitoring.** BetterUptime or similar; monitor the production URL and the `/api/enroll` endpoint.
-
-17. **Evaluate cookie consent.** If the site receives EU traffic and adds analytics or tracking scripts, a consent banner is required. Document the decision either way.
-
-18. **Add `aria-hidden="true"` to decorative SVGs** in `DemoPortalCTA.tsx` and `Footer.tsx`.
-
-19. **Document the rendering strategy** in an ADR. Confirm that `NEXT_PUBLIC_*` vars being build-time inlined is intentional and that a redeploy is the accepted workflow for changing partner configuration.
+- **If gaps 1–6 are addressed within 30 days:** re-audit on **2026-06-23**.
+- **Before first production launch with real partner data:** re-audit immediately prior; this report's Critical Gaps are launch blockers.
+- **Routine cadence after launch:** quarterly (next: **2026-08-23**).
